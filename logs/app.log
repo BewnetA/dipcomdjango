@@ -1,0 +1,7 @@
+2026-04-27 11:49:57,478 [INFO] django.utils.autoreload: Watching for file changes with StatReloader
+2026-04-27 11:49:57,554 [INFO] django.utils.autoreload: Watching for file changes with StatReloader
+2026-04-27 11:57:30,724 [INFO] django.utils.autoreload: Watching for file changes with StatReloader
+2026-04-27 11:58:00,159 [INFO] django.utils.autoreload: Watching for file changes with StatReloader
+2026-04-27 12:21:39,493 [INFO] django.utils.autoreload: /home/bewnet/Desktop/projects/dipcom/backend/core/settings.py changed, reloading.
+2026-04-27 12:21:40,517 [INFO] django.utils.autoreload: Watching for file changes with StatReloader
+2026-04-27 23:12:03,270 [INFO] django.utils.autoreload: Watching for file changes with StatReloader
