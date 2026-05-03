@@ -229,5 +229,5 @@ DEFAULT_FROM_EMAIL = 'Dipcom Tech Security <noreply@dipcom.tech>'
 # EMAIL_HOST_PASSWORD = 'your-gmail-app-password'
 
 # Stock API Configuration
-STOCK_API_URL = os.environ.get('STOCK_API_URL', 'https://ba36-102-208-96-16.ngrok-free.app')
+STOCK_API_URL = os.environ.get('STOCK_API_URL', 'https://stockapi.dipcomtech.com')
 
