@@ -193,6 +193,7 @@ class Sale(models.Model):
     vat_amount = models.DecimalField(max_digits=15, decimal_places=2)
     total_amount = models.DecimalField(max_digits=15, decimal_places=2)
 
+    invoice_number = models.CharField(max_length=100, blank=True, null=True)
     number_of_products = models.PositiveIntegerField(default=0)
     sale_date = models.DateTimeField(auto_now_add=True)
 

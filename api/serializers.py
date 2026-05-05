@@ -352,7 +352,7 @@ class SaleListSerializer(serializers.ModelSerializer):
         model = Sale
         fields = (
             'id', 'customer', 'customer_name', 'agent_name',
-            'total_amount', 'sales_type', 'payment_method',
+            'invoice_number', 'total_amount', 'sales_type', 'payment_method',
             'status', 'sale_date', 'number_of_products',
             'edit_request',
         )

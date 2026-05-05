@@ -91,7 +91,7 @@ class SalesExportDataView(APIView):
             if sale.items.exists():
                 for item in sale.items.all():
                     rows.append({
-                        'invoice_no': str(sale.id),
+                        'invoice_no': sale.invoice_number or str(sale.id),
                         'date_time': sale.sale_date.isoformat(),
                         'category_name': item.category_name or "",
                         'model': item.model or "",
@@ -122,7 +122,7 @@ class SalesExportDataView(APIView):
                     })
             else:
                 rows.append({
-                    'invoice_no': str(sale.id),
+                    'invoice_no': sale.invoice_number or str(sale.id),
                     'date_time': sale.sale_date.isoformat(),
                     'category_name': "",
                     'model': "",
@@ -562,7 +562,7 @@ class SaleViewSet(viewsets.ModelViewSet):
             company = sale.customer.company_name if sale.customer and sale.customer.company_name else "Private"
             
             rows.append({
-                'Invoice No.': str(sale.id)[:8],
+                'Invoice No.': sale.invoice_number or str(sale.id)[:8],
                 'Date': sale.sale_date.strftime('%Y-%m-%d %H:%M'),
                 'Buyer': customer_name,
                 'Company': company,
