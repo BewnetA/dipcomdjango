@@ -31,3 +31,7 @@
 2026-05-05 11:56:53,303 [INFO] django.utils.autoreload: Watching for file changes with StatReloader
 2026-05-05 11:57:50,731 [INFO] django.utils.autoreload: /home/bewnet/Desktop/projects/backend/api/admin.py changed, reloading.
 2026-05-05 11:57:51,938 [INFO] django.utils.autoreload: Watching for file changes with StatReloader
+2026-05-05 13:09:27,871 [INFO] django.utils.autoreload: Watching for file changes with StatReloader
+2026-05-06 20:10:50,095 [INFO] django.utils.autoreload: Watching for file changes with StatReloader
+2026-05-08 20:46:09,545 [INFO] django.utils.autoreload: Watching for file changes with StatReloader
+2026-05-08 21:16:14,749 [INFO] django.utils.autoreload: Watching for file changes with StatReloader

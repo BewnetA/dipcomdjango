@@ -10,6 +10,7 @@ class User(AbstractUser):
         ('admin', 'Admin'),
         ('agent', 'Agent'),
         ('accountant', 'Accountant'),
+        ('marketing', 'Marketing'),
     )
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='agent')
     name = models.CharField(max_length=255)
