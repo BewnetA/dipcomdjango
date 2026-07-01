@@ -3,6 +3,7 @@ from decimal import Decimal
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
+from django.utils import timezone
 from .models import (
     User,
     MarketingAgent,
@@ -207,10 +208,11 @@ class SaleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Sale
         fields = '__all__'
-        read_only_fields = ('id', 'sale_date', 'agent', 'agent_name')
+        read_only_fields = ('id', 'agent', 'agent_name')
         extra_kwargs = {
             # allow create via customer_create, and compute money server-side
             'customer': {'required': False, 'allow_null': True},
+            'sale_date': {'required': False},
             'total_amount_before_vat': {'required': False},
             'vat_amount': {'required': False},
             'total_amount': {'required': False},
@@ -234,6 +236,11 @@ class SaleSerializer(serializers.ModelSerializer):
     def validate_total_amount(self, value):
         if value < 0:
             raise serializers.ValidationError("Total amount cannot be negative.")
+        return value
+
+    def validate_sale_date(self, value):
+        if value and value > timezone.now():
+            raise serializers.ValidationError("Sale date cannot be in the future.")
         return value
 
     def validate(self, attrs):
@@ -281,6 +288,9 @@ class SaleSerializer(serializers.ModelSerializer):
                 validated_data['commission_rate'] = Decimal('0')
                 validated_data['commission_amount'] = Decimal('0')
 
+        if 'sale_date' not in validated_data:
+            validated_data['sale_date'] = timezone.now()
+
         sale = Sale.objects.create(**validated_data)
 
         for item_data in items_data:
@@ -301,6 +311,7 @@ class SaleSerializer(serializers.ModelSerializer):
     @transaction.atomic
     def update(self, instance, validated_data):
         old_sales_person_id = instance.sales_person_id
+        validated_data.pop('sale_date', None)
         items_data = validated_data.pop('items', None)
 
         # Recalculate totals from provided items

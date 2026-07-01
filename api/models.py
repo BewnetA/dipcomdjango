@@ -196,7 +196,7 @@ class Sale(models.Model):
 
     invoice_number = models.CharField(max_length=100, blank=True, null=True)
     number_of_products = models.PositiveIntegerField(default=0)
-    sale_date = models.DateTimeField(auto_now_add=True)
+    sale_date = models.DateTimeField(default=timezone.now)
 
     # Accountant Audit Request (one-to-one embedded)
     edit_request = models.OneToOneField(
