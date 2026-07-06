@@ -197,12 +197,26 @@ class SaleItemSerializer(serializers.ModelSerializer):
 # ─────────────────────────────────────────────
 # Sale (full)
 # ─────────────────────────────────────────────
+class SaleCustomerUpdateSerializer(serializers.Serializer):
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
+    phone = serializers.CharField(required=False, allow_blank=True)
+    address = serializers.CharField(required=False, allow_blank=True)
+    company_name = serializers.CharField(required=False, allow_blank=True)
+    position = serializers.CharField(required=False, allow_blank=True)
+    referred_by = serializers.CharField(required=False, allow_blank=True)
+    customer_type = serializers.CharField(required=False, allow_blank=True)
+    hear_about_us = serializers.CharField(required=False, allow_blank=True)
+    marketing_agent = serializers.IntegerField(required=False, allow_null=True)
+
+
 class SaleSerializer(serializers.ModelSerializer):
     items = SaleItemSerializer(many=True)
     customer_name = serializers.SerializerMethodField(read_only=True)
     edit_request = EditRequestSerializer(read_only=True)
     commission_paid = serializers.SerializerMethodField(read_only=True)
     customer_create = CustomerCreateSerializer(write_only=True, required=False)
+    customer_update = SaleCustomerUpdateSerializer(write_only=True, required=False)
     customer = serializers.PrimaryKeyRelatedField(queryset=Customer.objects.all(), required=False, allow_null=True)
 
     class Meta:
@@ -308,11 +322,37 @@ class SaleSerializer(serializers.ModelSerializer):
 
         return sale
 
+    def _apply_customer_update(self, sale, customer_data):
+        if not customer_data:
+            return
+        customer = sale.customer
+        allowed = (
+            'first_name', 'last_name', 'phone', 'address',
+            'company_name', 'position', 'referred_by', 'customer_type',
+            'hear_about_us',
+        )
+        for field in allowed:
+            if field in customer_data:
+                setattr(customer, field, customer_data[field])
+        if 'marketing_agent' in customer_data:
+            agent_id = customer_data.get('marketing_agent')
+            customer.marketing_agent = (
+                MarketingAgent.objects.filter(pk=agent_id).first()
+                if agent_id
+                else None
+            )
+        customer.save()
+
     @transaction.atomic
     def update(self, instance, validated_data):
         old_sales_person_id = instance.sales_person_id
-        validated_data.pop('sale_date', None)
+        customer_update = validated_data.pop('customer_update', None)
+        lock_commission = self.context.get('lock_commission', False)
         items_data = validated_data.pop('items', None)
+
+        if lock_commission:
+            validated_data.pop('commission_rate', None)
+            validated_data.pop('commission_amount', None)
 
         # Recalculate totals from provided items
         if items_data is not None:
@@ -327,18 +367,20 @@ class SaleSerializer(serializers.ModelSerializer):
             validated_data['vat_amount'] = vat
             validated_data['total_amount'] = total_before_vat + vat
             validated_data['number_of_products'] = sum(d['quantity'] for d in items_data)
-            rate = Decimal(str(validated_data.get('commission_rate', instance.commission_rate)))
+            rate = Decimal(str(instance.commission_rate))
             validated_data['commission_rate'] = rate
             validated_data['commission_amount'] = total_before_vat * (rate / Decimal('100'))
 
         # Partial PATCH: commission rate only (no items) — keep totals, recompute commission.
-        if items_data is None and 'commission_rate' in validated_data:
+        if not lock_commission and items_data is None and 'commission_rate' in validated_data:
             rate = Decimal(str(validated_data['commission_rate']))
             validated_data['commission_amount'] = instance.total_amount_before_vat * (rate / Decimal('100'))
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
+
+        self._apply_customer_update(instance, customer_update)
 
         # Re-sync marketing-agent counters (unsettled sales only).
         sp_old, sp_new = old_sales_person_id, instance.sales_person_id

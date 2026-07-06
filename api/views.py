@@ -57,6 +57,20 @@ class IsAccountantRole(permissions.BasePermission):
         return bool(request.user and request.user.is_authenticated and request.user.role in ('admin', 'accountant'))
 
 
+class IsAdminOrOwnSaleAgent(permissions.BasePermission):
+    """Admin may access any sale; agents only their own processed sales."""
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.role == 'admin':
+            return True
+        if user.role == 'agent' and view.action in ('retrieve', 'update', 'partial_update'):
+            return obj.agent_id == user.id
+        return False
+
+
 def _connection_through(customer: Customer) -> str:
     if customer.marketing_agent:
         return customer.marketing_agent.name
@@ -453,7 +467,105 @@ class CustomerViewSet(viewsets.ModelViewSet):
 
 class SaleViewSet(viewsets.ModelViewSet):
     queryset = Sale.objects.all()
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrOwnSaleAgent]
+
+    def get_permissions(self):
+        if self.action == 'destroy':
+            return [permissions.IsAuthenticated(), IsAdminRole()]
+        if self.action in ('update', 'partial_update', 'retrieve'):
+            return [permissions.IsAuthenticated(), IsAdminOrOwnSaleAgent()]
+        return [permissions.IsAuthenticated()]
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        user = self.request.user
+        if self.action in ('update', 'partial_update') and user.is_authenticated:
+            ctx['lock_commission'] = user.role in ('admin', 'agent')
+        return ctx
+
+    def perform_update(self, serializer):
+        serializer.save()
+
+    def _sale_items_changed(self, original_products, new_products):
+        if new_products is None:
+            return False
+        if len(original_products) != len(new_products):
+            return True
+        for index, new_product in enumerate(new_products):
+            original = original_products[index]
+            if original.model != new_product.get('model'):
+                return True
+            if int(original.quantity) != int(new_product.get('quantity', 0) or 0):
+                return True
+        return False
+
+    def _update_with_stock_sync(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        original_products = list(instance.items.all())
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+
+        new_products = request.data.get('items')
+        if self._sale_items_changed(original_products, new_products):
+            try:
+                stock_items = self.fetch_stock_products()
+                if not stock_items:
+                    logger.error('Stock service returned no products during sale update for sale %s', instance.pk)
+                    return Response({'detail': 'Stock service unavailable or returned no products.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+                stock_changes = self.build_stock_changes(original_products, new_products, stock_items)
+                if stock_changes:
+                    self.apply_stock_changes(stock_changes)
+            except Exception as e:
+                logger.exception('Stock update failed during sale update for sale %s', instance.pk)
+                return Response({'detail': f'Stock update failed: {str(e)}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        self.perform_update(serializer)
+        return Response(serializer.data)
+
+    def update(self, request, *args, **kwargs):
+        return self._update_with_stock_sync(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs['partial'] = True
+        return self._update_with_stock_sync(request, *args, **kwargs)
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        sales_person = instance.sales_person
+        customer = instance.customer
+        edit_req = instance.edit_request
+
+        # Remove payout audit lines so PROTECT on sale does not block deletion.
+        payout_lines = list(CommissionPayoutLine.objects.filter(sale=instance))
+        affected_batches = {line.batch_id for line in payout_lines}
+        if payout_lines:
+            CommissionPayoutLine.objects.filter(sale=instance).delete()
+            for batch_id in affected_batches:
+                batch = CommissionPayoutBatch.objects.filter(pk=batch_id).first()
+                if not batch:
+                    continue
+                remaining = batch.lines.all()
+                batch.sale_count = remaining.count()
+                batch.total_commission = sum(
+                    (line.commission_amount for line in remaining),
+                    Decimal('0'),
+                )
+                batch.save(update_fields=['sale_count', 'total_commission'])
+
+        if edit_req:
+            instance.edit_request = None
+            instance.save(update_fields=['edit_request'])
+            edit_req.delete()
+
+        instance.delete()
+
+        if customer and customer.total_purchases > 0:
+            customer.total_purchases -= 1
+            customer.save(update_fields=['total_purchases'])
+
+        if sales_person:
+            sales_person.recalculate_stats()
 
     def _resolve_period_range(self, period: str):
         today = timezone.localdate()
@@ -826,7 +938,7 @@ class SaleViewSet(viewsets.ModelViewSet):
             updated_sale.edit_request.resolved_at = timezone.now()
             updated_sale.edit_request.save()
 
-            # Also update customer fields if provided
+            # customer_update is applied inside SaleSerializer.update(); keep fallback for older payloads.
             customer_data = request.data.get('customer_update')
             if customer_data and isinstance(customer_data, dict):
                 customer = updated_sale.customer
