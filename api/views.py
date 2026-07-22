@@ -25,6 +25,7 @@ from .serializers import (
     ChangePasswordSerializer,
     MarketingAgentSerializer,
     CustomerSerializer,
+    CustomerListSerializer,
     SaleSerializer,
     SaleListSerializer,
     EditRequestSerializer,
@@ -33,6 +34,7 @@ from .serializers import (
     CommissionPayoutBatchSummarySerializer,
     ResetPasswordSerializer,
 )
+from .pagination import StandardResultsPagination
 
 HEAR_ABOUT_LABELS = {
     'tiktok': 'TikTok',
@@ -216,6 +218,101 @@ class InactiveCustomersDataView(APIView):
         return Response({'rows': rows})
 
 
+class CommissionExportDataView(APIView):
+    """Per-product commission rows for custom export."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        qs = (
+            Sale.objects.select_related('customer', 'sales_person', 'agent')
+            .prefetch_related('items', 'commission_payout_lines__batch')
+            .filter(sales_person__isnull=False, commission_amount__gt=0)
+            .order_by('-sale_date')
+        )
+        if request.user.role == 'agent':
+            qs = qs.filter(agent=request.user)
+
+        rows = []
+        for sale in qs:
+            customer = sale.customer
+            sale_commission = Decimal(str(sale.commission_amount or 0))
+            sale_before_vat = Decimal(str(sale.total_amount_before_vat or 0))
+            rate = float(sale.commission_rate or 0)
+            buyer_name = (
+                customer.company_name.strip()
+                if customer.company_name and customer.company_name.strip()
+                else f"{customer.first_name} {customer.last_name}".strip()
+            )
+            contact_name = f"{customer.first_name} {customer.last_name}".strip()
+            sales_person = sale.sales_person_name or (sale.sales_person.name if sale.sales_person else "")
+            payout_line = next(iter(sale.commission_payout_lines.all()), None)
+            payout_batch = payout_line.batch if payout_line else None
+            commission_status = "Paid out" if payout_batch else "Pending payout"
+
+            def base_row(line_commission):
+                return {
+                    'invoice_no': sale.invoice_number or str(sale.id),
+                    'date_time': sale.sale_date.isoformat(),
+                    'sales_person': sales_person,
+                    'processed_by': sale.agent_name or (sale.agent.name if sale.agent else ""),
+                    'sold_by': sale.sold_by or "",
+                    'buyer_id': str(customer.id),
+                    'buyer_name': buyer_name,
+                    'contact_name': contact_name,
+                    'phone': customer.phone or "",
+                    'address': customer.address or "",
+                    'buyer_type': customer.customer_type or "",
+                    'business_type': customer.business_type or "",
+                    'sales_type': sale.sales_type or "",
+                    'commission_rate': rate,
+                    'commission_paid_amount': float(line_commission.quantize(Decimal('0.01'))),
+                    'sale_commission_total': float(sale_commission),
+                    'sale_before_vat': float(sale_before_vat),
+                    'vat': float(sale.vat_amount or 0),
+                    'total_sale': float(sale.total_amount or 0),
+                    'commission_status': commission_status,
+                    'payout_date': payout_batch.created_at.isoformat() if payout_batch else "",
+                    'payout_reference': str(payout_batch.id) if payout_batch else "",
+                }
+
+            if sale.items.exists():
+                for item in sale.items.all():
+                    line_subtotal = Decimal(str(item.subtotal or 0))
+                    if sale_before_vat > 0:
+                        line_commission = sale_commission * (line_subtotal / sale_before_vat)
+                    else:
+                        line_commission = Decimal('0')
+                    if line_commission <= 0:
+                        continue
+                    product_label = " - ".join(
+                        [x for x in [item.category_name or "", item.model or ""] if x]
+                    ) or (item.item_description or "")
+                    rows.append({
+                        **base_row(line_commission),
+                        'product': product_label,
+                        'category_name': item.category_name or "",
+                        'model': item.model or "",
+                        'condition': item.condition or "",
+                        'item_description': item.item_description or "",
+                        'qty': int(item.quantity or 0),
+                        'total_product_price': float(line_subtotal),
+                    })
+            elif sale_commission > 0:
+                rows.append({
+                    **base_row(sale_commission),
+                    'product': "",
+                    'category_name': "",
+                    'model': "",
+                    'condition': "",
+                    'item_description': "",
+                    'qty': 0,
+                    'total_product_price': float(sale_before_vat),
+                })
+
+        return Response({'rows': rows})
+
+
 # ─── Users ────────────────────────────────────────────────────────────────────
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -359,8 +456,51 @@ class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all().order_by('-created_at')
     serializer_class = CustomerSerializer
     permission_classes = [permissions.IsAuthenticated]
+    pagination_class = StandardResultsPagination
     filter_backends = [filters.SearchFilter]
     search_fields = ['phone', 'first_name', 'last_name', 'company_name', 'email']
+
+    def get_queryset(self):
+        qs = Customer.objects.all().order_by('-created_at')
+        customer_type = (self.request.query_params.get('customer_type') or '').strip().lower()
+        if customer_type == 'individual':
+            qs = qs.filter(customer_type='individual')
+        elif customer_type == 'company':
+            qs = qs.filter(customer_type='company')
+        return qs.annotate(
+            total_amount_purchased=Sum('sales__total_amount'),
+            purchase_count=Count('sales', distinct=True),
+        )
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return CustomerListSerializer
+        return CustomerSerializer
+
+    @action(detail=True, methods=['get'], url_path='purchase-history')
+    def purchase_history(self, request, pk=None):
+        customer = self.get_object()
+        sales_qs = (
+            Sale.objects.filter(customer=customer)
+            .select_related('agent', 'sales_person')
+            .prefetch_related('items')
+            .order_by('-sale_date')
+        )
+        total_amount = sales_qs.aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
+        paginator = StandardResultsPagination()
+        page = paginator.paginate_queryset(sales_qs, request, view=self)
+        sales_data = SaleSerializer(page, many=True).data if page is not None else []
+        payload = {
+            'customer': CustomerSerializer(customer).data,
+            'total_amount_purchased': str(total_amount),
+            'sales': sales_data,
+        }
+        if page is not None:
+            return paginator.get_paginated_response(payload)
+        payload['count'] = sales_qs.count()
+        payload['next'] = None
+        payload['previous'] = None
+        return Response(payload)
 
     @action(detail=False, methods=['get'], url_path='by-phone')
     def by_phone(self, request):
@@ -468,6 +608,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
 class SaleViewSet(viewsets.ModelViewSet):
     queryset = Sale.objects.all()
     permission_classes = [permissions.IsAuthenticated, IsAdminOrOwnSaleAgent]
+    pagination_class = StandardResultsPagination
 
     def get_permissions(self):
         if self.action == 'destroy':

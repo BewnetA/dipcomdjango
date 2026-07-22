@@ -157,6 +157,24 @@ class CustomerSerializer(serializers.ModelSerializer):
         model = Customer
         fields = '__all__'
 
+
+class CustomerListSerializer(serializers.ModelSerializer):
+    marketing_agent_name = serializers.CharField(source='marketing_agent.name', read_only=True)
+    total_amount_purchased = serializers.DecimalField(
+        max_digits=15, decimal_places=2, read_only=True, default=0,
+    )
+    purchase_count = serializers.IntegerField(read_only=True, default=0)
+
+    class Meta:
+        model = Customer
+        fields = (
+            'id', 'first_name', 'last_name', 'email', 'phone', 'customer_type',
+            'company_name', 'position', 'business_type', 'address',
+            'hear_about_us', 'marketing_agent', 'marketing_agent_name',
+            'referred_by', 'created_at', 'total_visits', 'total_purchases',
+            'total_amount_purchased', 'purchase_count',
+        )
+
 class CustomerCreateSerializer(serializers.ModelSerializer):
     """Minimal payload used when creating a customer as part of a sale transaction."""
     class Meta:

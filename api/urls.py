@@ -9,6 +9,7 @@ from .views import (
     SaleViewSet,
     SalesExportDataView,
     InactiveCustomersDataView,
+    CommissionExportDataView,
 )
 
 router = DefaultRouter()
@@ -20,6 +21,7 @@ router.register(r'sales', SaleViewSet, basename='sale')
 urlpatterns = [
     path('export-data/sales/', SalesExportDataView.as_view(), name='export-data-sales'),
     path('export-data/inactive-customers/', InactiveCustomersDataView.as_view(), name='export-data-inactive-customers'),
+    path('export-data/commission/', CommissionExportDataView.as_view(), name='export-data-commission'),
 
     # Explicit export endpoints (kept outside router for compatibility/reliability)
     path(
